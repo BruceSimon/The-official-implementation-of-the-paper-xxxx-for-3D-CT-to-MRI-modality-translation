@@ -20,3 +20,6 @@ During the training process, we randomly cropped original CT/MRI into half of th
 ## Test
 The test process can strat by execute the test.py
 During the test process, the volume data is the original size
+## Visualization Result
+![Result](./BrainResult.png)
+
