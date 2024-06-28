@@ -7,4 +7,4 @@ the convolutional branch(High Resolution Part) contained in the Generator is ded
 while the transformer branch(Low Resolution Part) contained in the Generator is focus on the extraction of global long-range dependencies. 
 The Discriminator is a fully-convolutional network which is used to distinguish the realness of generated MRI volumes.
 
-![](Framework Overview.png)
+![Raw file](../main/Framework Overview.png)
