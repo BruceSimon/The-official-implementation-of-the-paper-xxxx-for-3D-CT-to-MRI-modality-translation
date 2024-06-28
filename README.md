@@ -1,5 +1,5 @@
-# xxxx: Transformer-based Generative Adversarial network for 3D CT-to-MRI modality translation
-This repository is an official implementation of the work named ""
+# Transformer-Convolution-mixed model for volumetric CT to volumetric MRI translation and visualization
+This repository is an official implementation of the work named "Transformer-Convolution-mixed model for volumetric CT to volumetric MRI translation and visualization"
 ## Introduction
 This network adopts a dual-input generative adversarial network(GAN). 
 It mainly consists of three parts:
