@@ -16,7 +16,7 @@ Each dataset was selected based on the first 100 paired volumetric CT and MRI sc
 
 ## Train
 The training process can start by execute the train.py
-During the training process, we randomly cropped original CT/MRI into half of the original size(x*1/2*y*1/2*z*1/2)
+During the training process, we randomly cropped original CT/MRI into half of the original size
 ## Test
 The test process can strat by execute the test.py
 During the test process, the volume data is the original size
