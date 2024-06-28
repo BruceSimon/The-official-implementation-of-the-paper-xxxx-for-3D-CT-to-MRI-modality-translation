@@ -1,7 +1,6 @@
 from functools import partial
 from itertools import repeat
-# from torch._six import container_abcs
-# from spectral import SpectralNorm
+
 import logging
 import os
 from collections import OrderedDict
@@ -372,67 +371,29 @@ class Attention(nn.Module):
             q, k, v = self.forward_conv(x, d, h, w)
 
 
-        # print('After forward_conv q:',q.shape)
-        # print('After forward_conv k:',k.shape)
-        # print('After forward_conv v:',v.shape)
-        # ‘b'表示batch_size,t表示seq_len,即num_tokens,(h,d)代表隐藏维度，其中h代表多头数目，d代表每个头的隐藏维度大小。
-        # 通过rearrange函数，将原始的qkv张量从(batch_size,seq_len,hidden_dim)的形状转换为(batch_size,num_heads,seq_len,head_dim)的形状
-        #seq_len=h*w*d,hidden_dim=num_heads*head_dim
-        # 其中head_dim=hidden_dim//num_heads表示每个头的隐藏维度大小，这样qkv张量就被成功分割成了多个头，便于后续进行多头自注意力计算
-        # print("Conv_proj_q:", self.proj_q(q).shape)
-        # print("Conv_proj_k:", self.proj_k(k).shape)
-        # print("Conv_proj_v:", self.proj_v(v).shape)
+     
         q = rearrange(self.proj_q(q), 'b t (h d) -> b h t d', h=self.num_heads)
         k = rearrange(self.proj_k(k), 'b t (h d) -> b h t d', h=self.num_heads)
         v = rearrange(self.proj_v(v), 'b t (h d) -> b h t d', h=self.num_heads)
-        #####开始数据预处理：①SRFORMER channel压缩+reshape ②MAXPOOL操作#####
 
-        # print('After rearrange q:',q.shape)
-        # print('After rearrange k:',k.shape)
-        # print('After rearrange v:',v.shape)
-        # maxpool=nn.MaxPool3d(2,stride=2)
-        # # q_pooling_size=
         avg_pool = nn.AvgPool3d(2,stride=2)
         q=avg_pool(q)
         k=avg_pool(k)
         v=avg_pool(v)
-        # print("After max pool")
-        # print('After avgpool q:', q.shape)
-        # print('After avgpool k:', k.shape)
-        # print('After avgpool v:', v.shape)
-        # k=self.conv_reduceChannel(k)
-
-        # 使用torch.einsum函数实现了自注意力得分的计算
-        # 自注意力机制的计算主要包括三个步骤：查询-键相似度计算，注意力权重计算和加权求和
-        # 1.查询-键相似度计算：使用torch.einsum函数将张量q和张量v进行矩阵相乘，其中'bhlk,bhtk->bhlt'字符串定义了维度的乘法规则：
-        # 执行 'bhlk,bhtk->bhlt' 矩阵乘法后，得到自注意力得分张量 attn_score，其维度为 (batch_size, num_heads, seq_len, seq_len)。
-        # 在得分矩阵中，每个元素 (b, h, l, t) 表示输入序列中第 l 个 token 和第 t 个 token 之间的相似度得分。
+       
         attn_score = torch.einsum('bhlk,bhtk->bhlt', [q, k]) * self.scale
 
-        # 2.注意力权重计算：通过对自注意力得分张量 attn_score 进行 softmax 操作，得到注意力权重张量 attn。
-        # 在 softmax 操作中，对于每个头 h 和位置 l，会对该头在所有位置上的得分进行归一化，从而得到位置 l 对于所有位置的注意力权重。
+        
         attn = F.softmax(attn_score, dim=-1)
-        # 3.加权求和：将注意力权重张量 attn 与值张量 v 进行加权求和操作，得到自注意力输出张量 x，其维度为 (batch_size, num_heads, seq_len, head_dim)。
-        # 在加权求和中，对于每个头 h 和位置 l，会使用注意力权重 attn[b, h, l, t] 对值 v[b, h, t, d] 进行加权求和，其中 t 表示序列中的位置，d 表示每个头的隐藏维度大小
+      
         attn = self.attn_drop(attn)
-        # 通过注意力权重 attn 对值 v 进行加权求和，得到自注意力的输出张量 x。
-        # v=self.conv_reduceChannel(v)
+       
         x = torch.einsum('bhlt,bhtv->bhlv', [attn, v])
-        # print("Attn x's shape",x.shape)
-        #skip connection add original Q,K,V to the final x
+       
         x=x+q
-        # print("before rearrange x shape",x.shape)
+       
         x = rearrange(x, 'b h t d -> b t (h d)')
-        # x = self.proj(x): 这句代码使用一个线性变换对自注意力机制输出的张量 x 进行降维或升维操作，以得到更适合后续任务的特征表示。
-        # 具体来说，self.proj 是一个全连接层（线性变换层），它将输入张量 x 的最后一个维度（通常是隐藏维度）从 dim_out 变换为 dim_out。这个线性变换的作用是对每个位置的特征进行线性组合，
-        # 从而得到更高级的特征表示。
-        # 经过这个操作后，x 张量的维度可能发生了变化，但一般来说，它的形状是 (batch_size, num_tokens, dim_out)。
-        # x=self.proj_drop(x): 这句代码是为了防止过拟合而引入的一个 Dropout 操作。
-        # self.proj_drop 是一个 Dropout 层，它以一定的概率 proj_drop 随机将输入张量 x 中的部分元素置为0，这样可以减少网络的参数之间的依赖关系，提高网络的泛化能力。
-        # Dropout 在训练过程中起作用，在推理过程中通常不使用 Dropout。所以在训练时，执行了 x = self.proj_drop(x) 操作后，输出的 x 张量将随机部分元素为0，以达到防止过拟合的目的。
-        # 在推理时，不会执行 Dropout 操作，x 张量保持不变。
-        # 综上所述，这两句代码的作用是对自注意力机制输出的特征 x 进行线性变换，并在训练时进行 Dropout 操作，以得到更具有区分性和泛化能力的特征表示。
-        # print("x size",x.shape)
+        
         x = self.proj(x)
         x = self.proj_drop(x)
 
@@ -456,11 +417,7 @@ class Attention(nn.Module):
         W_KV = W / module.stride_kv
         T_KV = H_KV * W_KV + 1 if module.with_cls_token else H_KV * W_KV
 
-        # C = module.dim
-        # S = T
-        # Scaled-dot-product macs
-        # [B x T x C] x [B x C x T] --> [B x T x S]
-        # multiplication-addition is counted as 1 because operations can be fused
+      
         flops += T_Q * T_KV * module.dim
         # [B x T x S] x [B x S x C] --> [B x T x C]
         flops += T_Q * module.dim * T_KV
@@ -548,28 +505,20 @@ class Block(nn.Module):
 
     def forward(self, x, d, h, w):
         res = x
-        # print("X",x.shape)
+
 
         x = self.norm1(x)
-        #Transformer Attention计算
         attn = self.attn(x, d, h, w)
         attn=self.drop_path(attn)
-        # print("Attn's shape:",attn.shape)
-        # 将进行下采样的token sequence重新上采样用于进行残差连接
-        # print("x's shape:",x.shape)
+  
         target_size=x.shape
-        # print("Target Size",target_size[1:])
+        
         attn=F.interpolate(attn.unsqueeze(0),size=target_size[1:],mode='bilinear',align_corners=False)
-        # print("After Interpolate:",attn.shape)
+        
         attn=torch.squeeze(attn,dim=1)
-        # print("After Squeeze attn:", attn.shape)
-        # print("X shape",x.shape)
+       
         x = res + attn
-        ###Solution 2###
-        #x.shape=[1,11760,16],attn插值出来的维度是[1,1,11760,16] 先将x和attn相加 再squeeze ps:感觉solution2是错误的
-        # x=x.squeeze(0)
-        # print("Squeeze X:",x.shape)
-        # x = x + self.drop_path(self.mlp(self.norm2(x)))
+      
         x = x + self.mlp(self.norm2(x))
         # print("Final X:",x.shape)
         return x
@@ -601,7 +550,7 @@ class ConvEmbed(nn.Module):
         x = self.proj(x)
 
         B, C, D, H, W = x.shape
-        # 为什么需要对特征图维度进行一次重新排列再进行LAYER NORM操作
+        
         x = rearrange(x, 'b c d h w -> b (d h w) c')
         if self.norm:
             x = self.norm(x)
@@ -771,7 +720,7 @@ class VisionTransformer(nn.Module):
                  embed_dim=768,#Transformer 中嵌入向量的维度，也是注意力模型的输出特征维度
                  depth=12,
                  num_heads=12,
-                 mlp_ratio=4.,  # mlp_ratio指的是什么？
+                 mlp_ratio=4.,  
                  #隐藏层维度与嵌入维度的比例，使用一个全连接的多层感知机(MLP)来对Transformer中的特征进行线性变换
                  qkv_bias=False,
                  drop_rate=0.,
@@ -834,10 +783,7 @@ class VisionTransformer(nn.Module):
         elif isinstance(m, (nn.LayerNorm, nn.BatchNorm3d)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-        # elif isinstance(m, (nn.LayerNorm, nn.InstanceNorm3d)):
-        #     nn.init.constant_(m.bias, 0)
-        #     nn.init.constant_(m.weight, 1.0)
-
+       
     def _init_weights_xavier(self, m):
         if isinstance(m, nn.Linear):
             logging.info('=> init weight of Linear from xavier uniform')
@@ -848,9 +794,7 @@ class VisionTransformer(nn.Module):
         elif isinstance(m, (nn.LayerNorm, nn.BatchNorm3d)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-        # elif isinstance(m, (nn.LayerNorm, nn.InstanceNorm3d)):
-        #     nn.init.constant_(m.bias, 0)
-        #     nn.init.constant_(m.weight, 1.0)
+        
 
     def forward(self, x):
         # print("X's shape before unsqueeze:"+str(x.shape))
@@ -923,10 +867,7 @@ class TransformBlockAndSelfAttentionCombinationBlock(nn.Module):
         #path1.
         x_path1 = self.trans_block1(x)
 
-        #path2.
-        # x_path2 = self.maxpool1(x)
-        # x_path2 = self.sa1(x_path2)
-        # x_path2 = self.up1(x_path2)
+      
         x_path2 = self.conv1(x)
 
         #multiply path1 and path2 together.
@@ -988,39 +929,7 @@ class ResPath_v2(nn.Module):
 
         return output
 
-# class ResBlock3D(nn.Module):
-#     def __init__(self, in_chan, out_chan):
-#         super().__init__()
-#         self.in_chan = in_chan
-#         self.out_chan = out_chan
-#         self.conv1 = nn.utils.spectral_norm(nn.Conv3d(in_chan, out_chan, kernel_size=3, stride=1, padding=1))
-#         self.conv2=nn.utils.spectral_norm(nn.Conv3d(in_chan, out_chan, kernel_size=1, stride=1, padding=0))
-#         self.norm=nn.InstanceNorm3d(hidden_channels * 8)
-#         self.activation=nn.LeakyReLU()
-#     def forward(self, x):
-#         original_x = x.clone()
-#         #path1
-#         x=self.conv2(x)
-#         x=self.norm(x)
-#         x=self.activation(x)
-#         #path2
-#         x2=self.conv1(original_x)
-#         return self.conv(x)
-# class RDBlock(nn.Module,in_channels=hidden_channels):
-#     def __init__(self):
-#         super().__init__()
-#         self.conv1=nn.Conv3d(in_channels=hidden_channels,out_channels=hidden_channels*2,kernel_size=3,stride=2,padding=1)
-#         self.insNorm=nn.InstanceNorm3d(hidden_channels*2)
-#         self.activation=nn.GELU(0.2)
-#         self.conv2=nn.Conv3d(in_channels=hidden_channels*2,out_channels=hidden_channels*4,kernel_size=3,stride=2,padding=1)
-#         self.conv3=nn.Conv3d(in_channels=hidden_channels*4,out_channels=hidden_channels*4,kernel_size=1,stride=1,padding=0)
-#     def forward(self,x):
-#         x1=x
-#         x=self.conv1(x)
-#         x=self.conv2(x+x1)
-#         x2=x
-#
-#         return x
+
 class HighFeaExtraBlock(nn.Module):
     def __init__(self):
         super().__init__()
@@ -1089,10 +998,9 @@ class HighFeaExtraBlock(nn.Module):
         en5=self.conv5(en4)#(1,128,5,7,7)
         en6=self.conv6(en5)#(1,128,5,7,7)
         de5=self.Tconv5(en5+en6)#(1,64,10,14,7)
-        # print("de5 size",de5.shape)
+        
         de4=self.Tconv4(de5+en4)#(1,32,10,14,21)
-        # print("de4 size", de4.shape)
-        # print("en3 size", en3.shape)
+
         de3=self.Tconv3(de4+en3)#(1,16,20,28,21)
         # print("de3 size",de3.shape)
         de2=self.Tconv2(de3+en2)#(1,8,40,56,42)
@@ -1128,11 +1036,7 @@ class HighFeaExtraBlockV2(nn.Module):
         self.avgpool4=nn.AvgPool3d(kernel_size=(1,1,2), stride=(1,1,3), padding=0)
         self.res_path4_decoder1=ResPath_v2(hidden_channels*8,hidden_channels*8,length=4)
         self.eca4 = EfficientChannelAttention(hidden_channels * 8)
-        # #layer x5
-        # self.trans_block5=TransformBlock(hidden_channels*8,hidden_channels*16)
-        # self.maxpool5=nn.MaxPool3d(kernel_size=(2,2,1),stride=(2,2,1),padding=0)
-        # self.res_path5_decoder1=ResPath_v2(hidden_channels*16,hidden_channels*16,length=5)
-
+      
         #######Decoder#######
         #layer x1
         self.com1=TransformBlockAndSelfAttentionCombinationBlock(hidden_channels*8,hidden_channels*8,scale_factor=(2,2,1))
@@ -1191,7 +1095,7 @@ class HighFeaExtraBlockV2(nn.Module):
 class Generator(nn.Module):
     def __init__(self, hidden_channels):
         super().__init__()
-        #原始分辨率部分
+        #High Res Part
         self.HighResBlock=nn.Sequential(HighFeaExtraBlockV2())
         # self.after_conv=nn.Sequential(
         #     nn.ConvTranspose3d(in_channels=hidden_channels*2,out_channels=1,kernel_size=2,stride=2,padding=0),
@@ -1199,7 +1103,7 @@ class Generator(nn.Module):
         # )
         self.upsample1 = nn.Upsample(scale_factor=(2,2,2), mode='trilinear',
                                      align_corners=True)
-        # 下采样部分
+        # Low Res Part
         # layer0 1->64
         # 64*64*64
         self.avgpool = nn.AvgPool3d(kernel_size=2, stride=2)
@@ -1210,31 +1114,23 @@ class Generator(nn.Module):
             nn.InstanceNorm3d(hidden_channels),
             nn.LeakyReLU(),
         )
-        # self.encoder_layer1_down = nn.Sequential(
-        #     VisionTransformer(kernel_size=3, stride=2, padding=1, in_chans=64, embed_dim=128,
-        #                       depth=1, num_heads=2, mlp_ratio=4, ))
+       
         self.encoder_layer1_down = nn.Sequential(
             VisionTransformer(kernel_size=3, stride=2, padding=1, in_chans=hidden_channels,
                               embed_dim=hidden_channels * 2,
                               depth=1, num_heads=4, mlp_ratio=4, ))
-        # self.encoder_layer2_down = nn.Sequential(
-        #     VisionTransformer(kernel_size=(2,2,1), stride=(2,2,1), padding=0, in_chans=128, embed_dim=256,
-        #                       depth=2, num_heads=4, mlp_ratio=4))
+        
         self.encoder_layer2_down = nn.Sequential(
             VisionTransformer(kernel_size=(2, 2, 1), stride=(2, 2, 1), padding=0, in_chans=hidden_channels * 2,
                               embed_dim=hidden_channels * 4,
                               depth=2, num_heads=4, mlp_ratio=4))
 
-        # self.encoder_layer3_down = nn.Sequential(
-        #     VisionTransformer(kernel_size=2, stride=(2,2,3), padding=0, in_chans=256, embed_dim=512,
-        #                       depth=2, num_heads=4, mlp_ratio=4))
+      
         self.encoder_layer3_down = nn.Sequential(
             VisionTransformer(kernel_size=2, stride=(2, 2, 3), padding=0, in_chans=hidden_channels * 4,
                               embed_dim=hidden_channels * 8,
                               depth=2, num_heads=4, mlp_ratio=4))
-        # self.encoder_layer4_down = nn.Sequential(
-        #     VisionTransformer(kernel_size=3, stride=1, padding=0, in_chans=256, embed_dim=512,
-        #                       depth=2, num_heads=4, mlp_ratio=4))
+       
         #将drop_rate设为0
         self.ResBlock1=TransformBlock(hidden_channels*8,hidden_channels*8)
         self.decoder_layer1_up = VisionTransformer_up(kernel_size=(2, 2, 3), stride=(2, 2, 3),
@@ -1245,14 +1141,12 @@ class Generator(nn.Module):
         self.decoder_layer2_up = VisionTransformer_up(kernel_size=(2,2,1), stride=(2,2,1), in_chans=hidden_channels*4, embed_dim=hidden_channels*2, depth=1,
                                                       num_heads=4,drop_path_rate=0.2)
         self.ResBlock3=TransformBlock(hidden_channels*2,hidden_channels*2)
-        # self.decoder_layer3_up = VisionTransformer_up(kernel_size=(2,2,2), stride=(2,2,2), in_chans=hidden_channels*2, embed_dim=hidden_channels*1, depth=1,
-        #                                               num_heads=4,drop_path_rate=0.2)
+       
         self.decoder_layer3_up = nn.Sequential(
             nn.Conv3d(hidden_channels*2, hidden_channels, kernel_size=3, stride=1, padding=1),
             nn.Upsample(scale_factor=(2, 2, 2), mode="trilinear", align_corners=True))
         self.ResBlock4=TransformBlock(hidden_channels,hidden_channels)
-        # self.decoder_layer4_up = VisionTransformer_up(kernel_size=(3,3,3), stride=(1,1,1), in_chans=hidden_channels*1, embed_dim=hidden_channels*2, depth=1,
-        #                                               num_heads=4,drop_path_rate=0)
+       
         self.decoder_layer4_up = nn.Sequential(
             nn.Conv3d(hidden_channels , hidden_channels, kernel_size=3, stride=1, padding=1))
             # nn.Upsample(scale_factor=(2, 2, 2), mode="trilinear", align_corners=True))
@@ -1338,21 +1232,12 @@ class Discriminator(nn.Module):
         )
         self.eca2 = EfficientChannelAttention(hidden_channels * 4)
         self.maxpool2=nn.MaxPool3d(kernel_size=3,stride=(2,2,3),padding=1)
-        # self.squeeze2 = Squeeze_excitation_block(32)
-
-        # self.conv3 = VisionTransformer(kernel_size=(2,2,1), stride=(2,2,1), padding=0, in_chans=32, embed_dim=64,
-        #                                depth=1, num_heads=2, mlp_ratio=4, drop_rate=0.3)
-        #
-        # self.conv4 = VisionTransformer(kernel_size=2, stride=(2,2,3), padding=0, in_chans=64, embed_dim=64,
-        #                                depth=1, num_heads=2, mlp_ratio=4, drop_rate=0.3)
+       
         self.conv3 = nn.Sequential(
             nn.utils.spectral_norm(nn.Conv3d(hidden_channels*4, hidden_channels*8, kernel_size=3, stride=1, padding=1)),
             nn.InstanceNorm3d(hidden_channels*8),
             nn.ReLU(inplace=True),
-            # nn.utils.spectral_norm(nn.Conv3d(hidden_channels * 8, hidden_channels * 8, kernel_size=3, stride=1, padding=1)),
-            # nn.InstanceNorm3d(hidden_channels * 8),
-            # nn.ReLU(inplace=True),
-            # nn.Dropout3d(0.2),
+
         )
         self.eca3 = EfficientChannelAttention(hidden_channels * 8)
         self.maxpool3=nn.MaxPool3d(kernel_size=3,stride=(2,2,1),padding=1)
@@ -1361,11 +1246,7 @@ class Discriminator(nn.Module):
             nn.utils.spectral_norm(nn.Conv3d(hidden_channels*8, hidden_channels*8, kernel_size=3, stride=1, padding=1)),
             nn.InstanceNorm3d(hidden_channels*8),
             nn.ReLU(inplace=True),
-            # nn.utils.spectral_norm(nn.Conv3d(hidden_channels * 8, hidden_channels * 8, kernel_size=3, stride=1, padding=1)),
-            # nn.InstanceNorm3d(hidden_channels * 8),
-            # nn.ReLU(inplace=True),
-            # nn.SiLU(inplace=True),
-            # nn.Dropout3d(0.2),
+           
         )
         self.eca4 = EfficientChannelAttention(hidden_channels * 8)
         self.maxpool4=nn.MaxPool3d(kernel_size=3,stride=1,padding=1)
@@ -1425,8 +1306,8 @@ totalTimesteps = 100
 trainsetRatio = 0.7  # according to deep learning specialization,
 # if you have a small collection of data, then use 70%/30% for train/test.
 nTimesteps_train = round(totalTimesteps * trainsetRatio)  # nTimesteps_train=70.
-dataSourcePath = '/home/dell/storage/XIEYETAO/preprocess_globalNormAndEnContrast/'
-dataSavePath = '/home/dell/storage/XIEYETAO/CVTFORMRI/Multi-scale_v7_pth/'
+dataSourcePath = 'Your dataSource Path'
+dataSavePath = 'Your dataSave Path'
 fileStartVal = 1
 fileIncrement = 1
 constVal = 1
@@ -1565,9 +1446,7 @@ def train(save_model=True):
                     print(f"Epoch {epoch}: Step {cur_step}: Generator (U-Net) loss: {mean_generator_loss}, Discriminator loss: {mean_discriminator_loss}")
                 else:
                     print("Pretrained initial state")
-                # show_tensor_images(condition, size=(input_dim, target_shape, target_shape))
-                # show_tensor_images(real, size=(real_dim, target_shape, target_shape))
-                # show_tensor_images(fake, size=(real_dim, target_shape, target_shape))
+              
                 mean_generator_loss = 0
                 mean_discriminator_loss = 0
                 # You can change save_model to True if you'd like to save the model
